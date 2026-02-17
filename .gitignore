@@ -1,0 +1,17 @@
+# OS files
+.DS_Store
+
+#Python
+_pycache_/
+.venv/
+venv/
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints
+
+# Data, Results and Figures
+Data/
+Figures/
+Results/
+
+
