@@ -5,6 +5,9 @@
 _pycache_/
 .venv/
 venv/
+read_downloads_save_dataset.py
+wrangle_nc_files.py 
+tmp_wrangle_ssrd_monthly.py
 
 # Jupyter notebook checkpoints
 .ipynb_checkpoints
