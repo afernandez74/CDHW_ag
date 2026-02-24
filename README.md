@@ -1,4 +1,4 @@
-# Compound Hot–Drought Risk Assessment in The Netherlands
+# Compound Drought and Heat Wave Risk Assessment in The Netherlands
 
 ## Project Overview
 
