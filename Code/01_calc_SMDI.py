@@ -206,6 +206,41 @@ def calculate_smdi(sd, alpha=0.5):
 sm_nl_wavg = (sm_nl.swvl1 * 0.25 + sm_nl.swvl2 * 0.75)
 sm_nl_wavg_dly= sm_nl_wavg.resample(valid_time='1D').mean()
 sm_nl_wavg_dly = dask.compute(sm_nl_wavg_dly)[0]
+#%% Sample gridcell of SM daily avg results 
+# 1. Box & Whisker plot and empirical distribution for central gridcell's sm_daily_avg
+
+# Select a central sample gridcell
+lat_idx = sm_nl_wavg_dly.latitude.size // 2
+lon_idx = sm_nl_wavg_dly.longitude.size // 2
+
+central_lat = sm_nl_wavg_dly.latitude.values[lat_idx]
+central_lon = sm_nl_wavg_dly.longitude.values[lon_idx]
+
+sm_central = sm_nl_wavg_dly.isel(latitude=lat_idx, longitude=lon_idx).dropna(dim='valid_time', how='any')
+
+central_sm_values = sm_central.values
+
+fig, axs = plt.subplots(1, 2, figsize=(11,5))
+fig.suptitle('SM Daily Avg: Central Gridcell ({:.2f}N, {:.2f}E)'.format(float(central_lat), float(central_lon)), fontsize=14)
+
+# Box and whisker plot
+axs[0].boxplot(central_sm_values, vert=True, patch_artist=True, showmeans=True)
+axs[0].set_ylabel('SM Daily Avg (m3/m3)')
+axs[0].set_title('Box & Whisker Plot')
+
+# Empirical distribution (histogram with KDE)
+axs[1].hist(central_sm_values, bins=40, density=True, alpha=0.6, color='tab:blue', edgecolor="black", label='Histogram')
+sns.kdeplot(central_sm_values, ax=axs[1], color='tab:red', label='KDE')
+
+axs[1].set_xlabel('SM Daily Avg (m3/m3)')
+axs[1].set_ylabel('Density')
+axs[1].set_title('Empirical Distribution')
+axs[1].legend()
+
+plt.tight_layout(rect=[0, 0, 1, 0.95])
+# plt.savefig(Path(path_save, "sm_daily_avg_central_gridcell_distribution.png"), dpi=300)
+plt.show()
+
 
 
 
@@ -241,11 +276,11 @@ smdi_central = smdi.isel(latitude=lat_idx, longitude=lon_idx).dropna(dim='valid_
 central_smdi_values = smdi_central.values
 
 fig, axs = plt.subplots(1, 2, figsize=(11,5))
-fig.suptitle('VPD Daily Maximums: Central Gridcell ({:.2f}N, {:.2f}E)'.format(float(central_lat), float(central_lon)), fontsize=14)
+fig.suptitle('SMDI: Central Gridcell ({:.2f}N, {:.2f}E)'.format(float(central_lat), float(central_lon)), fontsize=14)
 
 # Box and whisker plot
 axs[0].boxplot(central_smdi_values, vert=True, patch_artist=True, showmeans=True)
-axs[0].set_ylabel('VPDmax Daily (Pa)')
+axs[0].set_ylabel('SMDI (dimensionless)')
 axs[0].set_title('Box & Whisker Plot')
 
 # Empirical distribution (histogram with KDE)
@@ -258,7 +293,7 @@ axs[1].set_title('Empirical Distribution')
 axs[1].legend()
 
 plt.tight_layout(rect=[0, 0, 1, 0.95])
-# plt.savefig(Path(path_save, "vpd_max_daily_central_gridcell_distribution.png"), dpi=300)
+# plt.savefig(Path(path_save, "smdi_central_gridcell_distribution.png"), dpi=300)
 plt.show()
 
 # 2. Plot mean and standard deviation envelope timeseries for DOY climatology (mean year)
