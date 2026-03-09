@@ -328,7 +328,8 @@ plt.tight_layout()
 plt.show()
 
 
-#%% Quick map of average soil moisture (coastal outline of Europe only for boundary)
+#%% 
+# Quick map of average soil moisture (coastal outline of Europe only for boundary)
 # Map plot with LambertConformal projection; extent from data, Europe coast as outline
 
 fig = plt.figure(figsize=(12, 10))
