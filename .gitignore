@@ -8,6 +8,7 @@ venv/
 read_downloads_save_dataset.py
 wrangle_nc_files.py 
 tmp_wrangle_ssrd_monthly.py
+__pycache__/
 
 # Jupyter notebook checkpoints
 .ipynb_checkpoints
@@ -16,5 +17,5 @@ tmp_wrangle_ssrd_monthly.py
 Data/
 Figures/
 Results/
-
+logs/
 

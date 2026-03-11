@@ -1,8 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=era5_download
-#SBATCH --array=1980-2024             # one task per year
-#SBATCH --output=logs/era5_%a.out     # relative to submission directory (CDHW_ag/Code/)
-#SBATCH --error=logs/era5_%a.err
+#SBATCH --job-name=era5_test
+#SBATCH --output=logs/era5_test.out   # relative to submission directory (CDHW_ag/Code/)
+#SBATCH --error=logs/era5_test.err
 #SBATCH --partition=rome
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -23,23 +22,26 @@ eval "$($MAMBA_EXE shell hook --shell bash --root-prefix $MAMBA_ROOT_PREFIX)"
 mamba activate CE_env
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PATHS
-# ERA5_dat is inherited from ~/.bashrc via --export=ALL
+# TEST SETTINGS
 # ─────────────────────────────────────────────────────────────────────────────
 
+TEST_YEAR=2020
+TEST_OUTPUT_DIR="${ERA5_dat}_test"    # separate folder so test data never mixes with production
+
 mkdir -p "$SCRIPT_DIR/logs"
-mkdir -p "$ERA5_dat"
+mkdir -p "$TEST_OUTPUT_DIR"
 
 echo "========================================"
 echo "SLURM job:    $SLURM_JOB_ID"
-echo "Array task:   $SLURM_ARRAY_TASK_ID  (year)"
 echo "Node:         $SLURMD_NODENAME"
 echo "Script dir:   $SCRIPT_DIR"
-echo "Output dir:   $ERA5_dat"
+echo "Test year:    $TEST_YEAR"
+echo "Output dir:   $TEST_OUTPUT_DIR"
 echo "Start:        $(date)"
 echo "========================================"
 
-python "$SCRIPT_DIR/00_dwnld_arco_era5.py" --year "$SLURM_ARRAY_TASK_ID"
+# Override ERA5_dat inline so test output goes to the test folder
+ERA5_dat=$TEST_OUTPUT_DIR python "$SCRIPT_DIR/00_dwnld_arco_era5.py" --year "$TEST_YEAR"
 
 EXIT_CODE=$?
 
