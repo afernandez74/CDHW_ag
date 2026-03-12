@@ -11,9 +11,9 @@ Baseline period: 1980-2023.
 """
 
 #%%
-# Loading ERA5 soil moisture data from Zarr store
-# NOTE: run 00_pre_process_ERA5_tozarr.py first to create the Zarr store
+# imports
 
+import os
 import xarray as xr
 import numpy as np
 import numba
@@ -26,16 +26,25 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 import dask
-#%% Load soil moisture dataset and crop to Netherlands shape
-dat_path = Path('./../Data/ERA5_zarr/ERA5_NL.zarr')
+#%% 
+# Load soil moisture dataset and crop to shape
 
-ds = xr.open_zarr(
-    dat_path,
-    chunks={'valid_time': 24*365}
+glob_dat_path = Path(os.environ["ERA5_dat"])
+folder = "swv"
+dat_path = glob_dat_path / folder / "processed" / f"{folder}_cleaned.zarr"
+
+
+sm = ( #soil moisture dataset
+    xr.open_zarr(dat_path, consolidated=True, chunks={})
 )
 
-# Get soil moisture data
-sm = ds[['swvl1','swvl2']]
+year_i = sm.time.dt.values[0]
+
+#%%
+# Perform spatial clip to area of interest
+# Countries in Analysis: 
+
+countries = ['France', 'Belgium', 'Netherlands', 'Germany']
 
 # Load countries shapefile
 global_countries_path = Path('./../Data/countries_shp/ne_110m_admin_0_countries.shp')
@@ -43,17 +52,17 @@ global_countries_path = Path('./../Data/countries_shp/ne_110m_admin_0_countries.
 # Read countries shapefile
 countries_gdf = gpd.read_file(str(global_countries_path))
 
-# Create Netherlands shape
-NL_shape = countries_gdf[countries_gdf['ADM0_A3'] == 'NLD']
+# Define region
+region = countries_gdf[countries_gdf['SOVEREIGNT'].isin(countries)].dissolve()  
 
 # Set the spatial dimensions so rioxarray knows which axes are spatial
 sm = sm.rio.set_spatial_dims(x_dim='longitude', y_dim='latitude')
 sm = sm.rio.write_crs("EPSG:4326")  # ERA5 is in WGS84
 
 # Clip to Netherlands shape, keeping all cells that intersect the border
-sm_nl = sm.rio.clip(
-    NL_shape.geometry,
-    NL_shape.crs,
+sm_clip = sm.rio.clip(
+    region.geometry,
+    region.crs,
     all_touched=True   # include intersecting edge cells
 )
 
@@ -63,20 +72,20 @@ def calculate_sm_doy_climatology(sm_daily, baseline_start=None, baseline_end=Non
     Compute DOY climatological median, min, and max of daily soil moisture.
     These are the inputs required for the SD calculation in SMDI.
     """
-    years = pd.DatetimeIndex(sm_daily['valid_time'].values).year
+    years = pd.DatetimeIndex(sm_daily['time'].values).year
     baseline_start = baseline_start or str(years.min())
     baseline_end   = baseline_end   or str(years.max())
 
     sm_baseline = (
         sm_daily
-        .sel(valid_time=slice(baseline_start, baseline_end))
-        .chunk({'valid_time': -1, 'latitude': -1, 'longitude': -1})
-        .assign_coords(doy=lambda x: x.valid_time.dt.dayofyear)
+        .sel(time=slice(baseline_start, baseline_end))
+        .chunk({'time': -1, 'latitude': -1, 'longitude': -1})
+        .assign_coords(doy=lambda x: x.time.dt.dayofyear)
     )
 
-    sm_median_doy = sm_baseline.groupby('doy').median('valid_time')
-    sm_min_doy    = sm_baseline.groupby('doy').min('valid_time')
-    sm_max_doy    = sm_baseline.groupby('doy').max('valid_time')
+    sm_median_doy = sm_baseline.groupby('doy').median('time')
+    sm_min_doy    = sm_baseline.groupby('doy').min('time')
+    sm_max_doy    = sm_baseline.groupby('doy').max('time')
 
     return sm_median_doy, sm_min_doy, sm_max_doy
 
@@ -84,7 +93,7 @@ def calculate_sd(sm_daily, sm_median_doy, sm_min_doy, sm_max_doy):
     """
     Calculate daily Soil water Deficit/surplus (SD) scaled to [-100, +100].
     """
-    sm_daily = sm_daily.assign_coords(doy=sm_daily.valid_time.dt.dayofyear)
+    sm_daily = sm_daily.assign_coords(doy=sm_daily.time.dt.dayofyear)
 
     median_aligned = sm_median_doy.sel(doy=sm_daily.doy)
     min_aligned    = sm_min_doy.sel(doy=sm_daily.doy)
@@ -165,7 +174,7 @@ def calculate_smdi(sd, alpha=0.5):
     ----------
     sd : xarray.DataArray
         Daily Soil water Deficit/Surplus values (dimensionless, [-100, 100]);
-        must have 'valid_time', 'latitude', 'longitude' dimensions.
+        must have 'time', 'latitude', 'longitude' dimensions.
     alpha : float, optional
         Memory decay factor. Default is 0.5 following Narasimhan & Srinivasan (2005).
 
@@ -191,32 +200,48 @@ def calculate_smdi(sd, alpha=0.5):
         dims=sd_computed.dims,
         attrs={
             'long_name'   : 'Soil Moisture Deficit Index',
+            'units'       : 'dimensionless',
+            'description' : 'Recursive soil moisture drought index scaled from daily soil water volume ERA5 data',
+            'reference'   : 'Narasimhan & Srinivasan (2005), Guo et al. (2023)',
+            'daily_input' : 'Daily mean soil moisture from depth-weighted average of ERA5 swvl1 (0–7 cm) and swvl2 (7–28 cm)',
             'alpha'       : alpha,
         }
     )
 
-    return smdi
+return smdi
 
-#%% Calculate weighted average soil moisture based on thickness of soil layers
+#%% 
+# Calculate weighted average soil moisture based on thickness of soil layers
 # Thickness of soil layer 1: 0-7cm
 # Thickness of soil layer 2: 7-28cm
 # Weighted average soil moisture = (swvl1 * 7 + swvl2 * 21) / (7 + 21)
 # Decimal multipliers: 0.25 (0-7cm) and 0.75 (7-28cm)
 
-sm_nl_wavg = (sm_nl.swvl1 * 0.25 + sm_nl.swvl2 * 0.75)
-sm_nl_wavg_dly= sm_nl_wavg.resample(valid_time='1D').mean()
-sm_nl_wavg_dly = dask.compute(sm_nl_wavg_dly)[0]
+sm_clip_wavg = (sm_clip.swvl1 * 0.25 + sm_clip.swvl2 * 0.75)
+# sm_clip_wavg_dly = sm_clip_wavg.resample(time='1D').mean().compute()
+# sm_clip_wavg_dly = sm_clip_wavg_dly.chunk({'time': 365, 'latitude': -1, 'longitude': -1})
+sm_clip_wavg_dly = (
+    sm_clip_wavg
+    .chunk({'time': 43_800, 'latitude': -1, 'longitude': -1})
+    .resample(time='1D')
+    .mean()
+    .compute()   
+)
+
+
+
+
 #%% Sample gridcell of SM daily avg results 
 # 1. Box & Whisker plot and empirical distribution for central gridcell's sm_daily_avg
 
 # Select a central sample gridcell
-lat_idx = sm_nl_wavg_dly.latitude.size // 2
-lon_idx = sm_nl_wavg_dly.longitude.size // 2
+lat_idx = sm_clip_wavg_dly.latitude.size // 2
+lon_idx = sm_clip_wavg_dly.longitude.size // 2
 
-central_lat = sm_nl_wavg_dly.latitude.values[lat_idx]
-central_lon = sm_nl_wavg_dly.longitude.values[lon_idx]
+central_lat = sm_clip_wavg_dly.latitude.values[lat_idx]
+central_lon = sm_clip_wavg_dly.longitude.values[lon_idx]
 
-sm_central = sm_nl_wavg_dly.isel(latitude=lat_idx, longitude=lon_idx).dropna(dim='valid_time', how='any')
+sm_central = sm_clip_wavg_dly.isel(latitude=lat_idx, longitude=lon_idx).dropna(dim='time', how='any')
 
 central_sm_values = sm_central.values
 
@@ -251,17 +276,17 @@ plt.show()
 # SMDI calculated from weighted average soil moisture from two top soil layers
 
 sm_median_doy, sm_min_doy, sm_max_doy = calculate_sm_doy_climatology(
-    sm_nl_wavg_dly,
+    sm_clip_wavg_dly,
 )
 
 # Step 2: Soil water Deficit/Surplus [-100, 100]
-sd = calculate_sd(sm_nl_wavg_dly, sm_median_doy, sm_min_doy, sm_max_doy)
+sd = calculate_sd(sm_clip_wavg_dly, sm_median_doy, sm_min_doy, sm_max_doy)
 
 # Step 3: Recursive SMDI
 smdi = calculate_smdi(sd, alpha=0.5)
 
 #%% Sample plot of SMDI results
-#%% Sample gridcell of VPD max results 
+
 # 1. Box & Whisker plot and empirical distribution for central gridcell's vpd_max_daily
 
 # Select a central sample gridcell
@@ -271,7 +296,7 @@ lon_idx = smdi.longitude.size // 2
 central_lat = smdi.latitude.values[lat_idx]
 central_lon = smdi.longitude.values[lon_idx]
 
-smdi_central = smdi.isel(latitude=lat_idx, longitude=lon_idx).dropna(dim='valid_time', how='any')
+smdi_central = smdi.isel(latitude=lat_idx, longitude=lon_idx).dropna(dim='time', how='any')
 
 central_smdi_values = smdi_central.values
 
@@ -330,7 +355,8 @@ plt.tight_layout()
 plt.show()
 
 
-#%% Quick map of average soil moisture difference (swvl2 - swvl1) between soil layers
+#%% 
+# Mmap of weighted average soil moisture
 # Map plot with LambertConformal projection
 
 fig = plt.figure(figsize=(12, 10))
@@ -339,29 +365,33 @@ ax = fig.add_subplot(1, 1, 1, projection=ccrs.LambertConformal(
     central_latitude=40
 ))
 
-lon_min = sm_nl.longitude.min().values
-lon_max = sm_nl.longitude.max().values
-lat_min = sm_nl.latitude.min().values
-lat_max = sm_nl.latitude.max().values
+# set spatial extent for map based on data
+lon_min = sm_clip.longitude.min().values
+lon_max = sm_clip.longitude.max().values
+lat_min = sm_clip.latitude.min().values
+lat_max = sm_clip.latitude.max().values
 extent = [lon_min - 1, lon_max + 1, lat_min - 1, lat_max + 1]
 ax.set_extent(extent, crs=ccrs.PlateCarree())
 
+# add coastlines and country borders
 ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='black')
 ax.add_feature(cfeature.BORDERS, linewidth=0.5, edgecolor='gray', linestyle='--')
 ax.add_feature(cfeature.LAND, facecolor='lightgray', alpha=0.5)
 ax.add_feature(cfeature.OCEAN, facecolor='lightblue', alpha=0.5)
 ax.add_feature(cfeature.LAKES, facecolor='lightblue', alpha=0.5)
 
+# gridlines
 gl = ax.gridlines(draw_labels=True, color='gray', alpha=0.3, linestyle='--', linewidth=0.5)
 gl.top_labels = False
 gl.right_labels = False
 
-im = sm_nl_wavg_dly.mean(dim='valid_time').plot(
+# the actual map
+im = sm_clip_wavg_dly.mean(dim='time').plot(
     ax=ax,
     transform=ccrs.PlateCarree(),
     cmap='YlGnBu',
     cbar_kwargs={
-        'label': f"Average {sm_nl.swvl1.attrs.get('long_name', 'swvl1')} ({sm_nl.swvl1.attrs.get('units', '')})",
+        'label': f"Average {sm_clip.swvl1.attrs.get('long_name', 'swvl1')} ({sm_clip.swvl1.attrs.get('units', '')})",
         'shrink': 0.8,
         'pad': 0.05
     }
@@ -380,7 +410,7 @@ lon_idx = smdi.longitude.size // 2
 central_lat = smdi.latitude.values[lat_idx]
 central_lon = smdi.longitude.values[lon_idx]
 
-smdi_central_cell = smdi.isel(latitude=lat_idx, longitude=lon_idx).dropna(dim='valid_time', how='any')
+smdi_central_cell = smdi.isel(latitude=lat_idx, longitude=lon_idx).dropna(dim='time', how='any')
 
 # Create time series plot
 fig, ax = plt.subplots(figsize=(14, 6))
@@ -389,7 +419,7 @@ fig, ax = plt.subplots(figsize=(14, 6))
 smdi_central_cell.plot(ax=ax, color='steelblue', linewidth=0.5, alpha=0.7, label='SMDI (central gridcell)')
 
 # Calculate and plot 3-month (90-day) running mean
-smdi_running_mean = smdi_central_cell.rolling(valid_time=90, center=True).mean()
+smdi_running_mean = smdi_central_cell.rolling(time=90, center=True).mean()
 smdi_running_mean.plot(ax=ax, color='black', linewidth=1.5, alpha=0.8, label='3-month running mean')
 
 # Add drought threshold lines
@@ -419,18 +449,20 @@ plt.tight_layout()
 plt.show()
 
 print("Time series plot created.")
-#%% Save SMDI as netcdf
-path_save = Path('./../Results/SMDI/')
+#%% Save SMDI as Zarr
+path_save = Path("./../Results/SMDI")
+path_save.mkdir(parents=True, exist_ok=True)
 
-year_o = str(int(smdi.valid_time.dt.year.isel(valid_time=0).item()))
-year_f = str(int(smdi.valid_time.dt.year.isel(valid_time=-1).item()))
-lat_o, lat_f = str(int(smdi.latitude.values[0])), str(int(smdi.latitude.values[-1]))
-lon_o, lon_f = str(int(smdi.longitude.values[0])), str(int(smdi.longitude.values[-1]))
+# Attach metadata so the file is self-describing
+smdi.attrs.update({
+    "long_name"       : "Soil Moisture Deficit Index",
+    "alpha"           : 0.5,
+    "baseline_period": f"{smdi.time.dt.year.values[0]}-{smdi.time.dt.year.values[-1]}",
+    "source"          : "ERA5 swvl1/swvl2 via ARCO-ERA5",
+    "created"         : pd.Timestamp.now(tz="UTC").isoformat(),
+})
 
-name = f'SMDI_{year_o}_{year_f}_latlon_{lat_o}_{lat_f}_{lon_o}_{lon_f}.nc'
-save_toggle = input("\nSave SMDI results? (Y or N) \n ...")
-if save_toggle.upper() == 'Y':
-    smdi.to_netcdf(Path(path_save, name))
-    print(f"SMDI saved to: {Path(path_save, name)}")
-
+zarr_path = path_save / "smdi.zarr"
+smdi.to_zarr(zarr_path, mode="w", consolidated=True)
+print(f"SMDI saved to: {zarr_path}")
 # %%
