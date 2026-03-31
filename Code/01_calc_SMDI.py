@@ -29,6 +29,7 @@ import dask
 #%% 
 # Load soil moisture dataset and crop to shape
 
+
 glob_dat_path = Path(os.environ["ERA5_dat"])
 folder = "swv"
 dat_path = glob_dat_path / folder / "processed" / f"{folder}_cleaned.zarr"
@@ -38,7 +39,10 @@ sm = ( #soil moisture dataset
     xr.open_zarr(dat_path, consolidated=True, chunks={})
 )
 
-year_i = sm.time.dt.values[0]
+# save path for figures
+path_save = Path("./../Figs/NAC_PPT/")
+
+
 
 #%%
 # Perform spatial clip to area of interest
@@ -59,11 +63,11 @@ region = countries_gdf[countries_gdf['SOVEREIGNT'].isin(countries)].dissolve()
 sm = sm.rio.set_spatial_dims(x_dim='longitude', y_dim='latitude')
 sm = sm.rio.write_crs("EPSG:4326")  # ERA5 is in WGS84
 
-# Clip to Netherlands shape, keeping all cells that intersect the border
+# Clip to shape, keeping all cells that intersect the border
 sm_clip = sm.rio.clip(
     region.geometry,
     region.crs,
-    all_touched=True   # include intersecting edge cells
+    all_touched=True  
 )
 
 #%% define functions
@@ -208,7 +212,7 @@ def calculate_smdi(sd, alpha=0.5):
         }
     )
 
-return smdi
+    return smdi
 
 #%% 
 # Calculate weighted average soil moisture based on thickness of soil layers
@@ -351,7 +355,7 @@ ax.set_title('Mean Year: SM Climatology (Max and Min bounds)\nCentral Gridcell (
 ax.legend()
 plt.grid(True, which='major', linestyle='--', alpha=0.7)
 plt.tight_layout()
-# plt.savefig(Path(path_save, "sm_mean_std_envelope_central_gridcell.png"), dpi=300)
+# plt.savefig(Path(save_path, "sm_mean_std_envelope_central_gridcell.png"), dpi=300)
 plt.show()
 
 
@@ -397,30 +401,32 @@ im = sm_clip_wavg_dly.mean(dim='time').plot(
     }
 )
 
-ax.set_title('Difference in average soil moisture (swvl2 - swvl1)\n1980-2023', fontsize=14, fontweight='bold', pad=15)
+ax.set_title('Average soil moisture (swvl2 + swvl1)\n1980-2023', fontsize=14, fontweight='bold', pad=15)
 plt.tight_layout()
 plt.show()
 
 
 # %%
 # Select a central gridcell for time series visualization
-lat_idx = smdi.latitude.size // 2
-lon_idx = smdi.longitude.size // 2
+# lat_idx = smdi.latitude.size // 2
+# lon_idx = smdi.longitude.size // 2
 
-central_lat = smdi.latitude.values[lat_idx]
-central_lon = smdi.longitude.values[lon_idx]
-
-smdi_central_cell = smdi.isel(latitude=lat_idx, longitude=lon_idx).dropna(dim='time', how='any')
+# central_lat = smdi.latitude.values[lat_idx]
+# central_lon = smdi.longitude.values[lon_idx]
+central_lat = 52
+central_lon = 5
+# smdi_central_cell = smdi.isel(latitude=lat_idx, longitude=lon_idx).dropna(dim='time', how='any')
+smdi_central_cell = smdi.sel(latitude=central_lat, longitude=central_lon).dropna(dim='time', how='any')
 
 # Create time series plot
 fig, ax = plt.subplots(figsize=(14, 6))
 
 # Plot SMDI time series for the central gridcell
-smdi_central_cell.plot(ax=ax, color='steelblue', linewidth=0.5, alpha=0.7, label='SMDI (central gridcell)')
+smdi_central_cell.plot(ax=ax, color='steelblue', linewidth=1.0, alpha=0.7, label='SMDI (central gridcell)')
 
 # Calculate and plot 3-month (90-day) running mean
 smdi_running_mean = smdi_central_cell.rolling(time=90, center=True).mean()
-smdi_running_mean.plot(ax=ax, color='black', linewidth=1.5, alpha=0.8, label='3-month running mean')
+smdi_running_mean.plot(ax=ax, color='black', linewidth=2.0, alpha=0.8, label='3-month running mean')
 
 # Add drought threshold lines
 ax.axhline(y=-1.0, color='orange', linestyle='--', linewidth=1, alpha=0.7, label='Mild drought threshold')
@@ -428,27 +434,322 @@ ax.axhline(y=-2.0, color='red', linestyle='--', linewidth=1, alpha=0.7, label='M
 ax.axhline(y=-3.0, color='darkred', linestyle='--', linewidth=1, alpha=0.7, label='Severe drought threshold')
 ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5, alpha=0.3)
 
-# Mark known drought events
+# # Mark known drought events
+# known_droughts = {
+#     '2003': ('2003-06-01', '2003-09-30'),
+#     '2018': ('2018-05-01', '2018-09-30'),
+#     '2022': ('2022-05-01', '2022-09-30')
+# }
+# Mark known drought for ppt
 known_droughts = {
-    '2003': ('2003-06-01', '2003-09-30'),
-    '2018': ('2018-05-01', '2018-09-30'),
-    '2022': ('2022-05-01', '2022-09-30')
+    '2018': ('2018-06-01', '2018-08-30'),
+    '2020': ('2020-06-01', '2020-08-30'),    
+    '2022': ('2022-06-01', '2022-08-30')
 }
 
 for year, (start, end) in known_droughts.items():
     ax.axvspan(pd.to_datetime(start), pd.to_datetime(end), 
                alpha=0.2, color='red', label=f'known drought' if year == '2003' else '')
 
-ax.set_xlabel('Date', fontsize=12)
-ax.set_ylabel('SMDI', fontsize=12)
-ax.set_title('Daily SMDI & 3-month Running Mean - Central gridcell example\n1980-2023', 
-             fontsize=14, fontweight='bold')
+ax.set_xlim(pd.to_datetime('2015-01-01'),pd.to_datetime('2024-01-01'))
+
+
+ax.set_xlabel('Date', fontsize=16)
+ax.set_ylabel('SMDI', fontsize=16)
+ax.set_title('Daily SMDI & 3-month Running Mean - Utrech, NL\n2015-2024', 
+             fontsize=16, fontweight='bold')
 ax.grid(True, alpha=0.3)
-ax.legend(loc='best', fontsize=9)
+ax.tick_params(labelsize=12)
+ax.legend(loc='lower left', fontsize=12)
 plt.tight_layout()
 plt.show()
 
 print("Time series plot created.")
+
+#%%
+# ============================================================
+# 3-Panel Spatial Map: SMDI Agricultural Drought Characterisation
+#   (a) Mean SMDI — JJA potato bulking stage (Jun–Aug)
+#   (b) Linear trend in JJA SMDI (yr⁻¹)
+#   (c) Mean length of sustained drought spells during JJA
+#       (consecutive days with SMDI < -1.0)
+# ============================================================
+#
+# Note on sign convention: SMDI drought thresholds are NEGATIVE
+#   SMDI < -1  →  mild drought
+#   SMDI < -2  →  moderate drought
+#   SMDI < -3  →  severe drought
+#
+# Note on memory: SMDI is recursive (α=0.5), so sustained negative
+# values represent genuinely accumulated soil water deficits.
+# Spell length is therefore more physically meaningful here than
+# for a memoryless index, and spatially highlights regions where
+# the soil stays depleted through the bulking window.
+#
+# Commented alternatives for panel (a):
+#   - Spring preconditioning: smdi_amj = smdi.sel(time=smdi.time.dt.month.isin([4,5,6]))
+#     (Trnka et al. 2015, Nature Climate Change — late-spring SM deficit
+#      predicts agricultural drought better than summer average alone)
+#   - 10th percentile of JJA SMDI: worst-year spatial footprint
+#     smdi_panel_a = smdi_jja.quantile(0.10, dim='time').compute()
+#   - Cumulative drought stress (∑ SMDI < -1 during JJA, normalised by years):
+#     maps directly onto FAO crop water-stress integrals (Steduto et al. 2012)
+# ============================================================
+
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import matplotlib.colors as mcolors
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
+import numpy as np
+from scipy import stats
+
+drought_threshold = -1.0   # mild drought; change to -2.0 for moderate
+
+# ── 1. Mean JJA SMDI (potato bulking stage) ──────────────────────────────────
+smdi_jja      = smdi.sel(time=smdi.time.dt.month.isin([6, 7, 8]))
+smdi_panel_a  = smdi_jja.mean(dim='time').compute()
+panel_a_title = '(a)  Mean SMDI — Potato Bulking Stage\n(June–August)'
+panel_a_cbar  = 'Mean SMDI — JJA (dimensionless)'
+
+# ── 2. Linear Trend of JJA SMDI (yr⁻¹, per grid cell) ───────────────────────
+#
+# Trend is computed on annual JJA means to remove the within-season
+# autocorrelation introduced by the recursive SMDI formula. Using annual
+# summaries gives one value per year per cell, making OLS residuals
+# more independent than fitting to the raw daily series.
+
+smdi_jja_annual = smdi_jja.resample(time='YE').mean().compute()
+years_numeric   = smdi_jja_annual.time.dt.year.values.astype(float)
+
+def ols_slope_peryear_smdi(y):
+    mask = np.isfinite(y)
+    if mask.sum() < 5:
+        return np.nan
+    slope, _, _, _, _ = stats.linregress(years_numeric[mask], y[mask])
+    return float(slope)   # already yr⁻¹ (input is annual means)
+
+smdi_trend = xr.apply_ufunc(
+    ols_slope_peryear_smdi,
+    smdi_jja_annual,
+    input_core_dims=[['time']],
+    vectorize=True,
+    dask='parallelized',
+    output_dtypes=[float],
+).compute()
+
+# ── 3. Mean drought spell length during JJA ──────────────────────────────────
+#
+# For each year, find runs of consecutive JJA days where SMDI < threshold,
+# then average the spell lengths spatially. The result is: "on average, when
+# a drought episode starts during potato bulking, how many days does it last?"
+# A 14-day spell is agronomically far more damaging than 14 isolated days
+# because soil moisture cannot recharge fast enough to prevent yield loss.
+
+def mean_spell_length_jja(smdi_da, threshold=-1.0):
+    """
+    For each grid cell, compute the mean length (days) of consecutive
+    JJA periods where SMDI < threshold, averaged across all years.
+
+    Parameters
+    ----------
+    smdi_da : xr.DataArray  — full SMDI time series (time, lat, lon)
+    threshold : float       — drought onset threshold (default -1.0)
+
+    Returns
+    -------
+    mean_spell : xr.DataArray  — (lat, lon) mean JJA spell length (days)
+    """
+    # Work on JJA subset only
+    da_jja = smdi_da.sel(time=smdi_da.time.dt.month.isin([6, 7, 8])).compute()
+
+    in_drought = (da_jja < threshold).values   # bool (time, lat, lon)
+    n_time, n_lat, n_lon = in_drought.shape
+    mean_spell_arr = np.full((n_lat, n_lon), np.nan)
+
+    for i in range(n_lat):
+        for j in range(n_lon):
+            ts = in_drought[:, i, j].astype(float)
+
+            # Skip masked / all-NaN cells
+            if np.all(~np.isfinite(da_jja.values[:, i, j])):
+                continue
+
+            # Find run-length-encoded spell lengths
+            spell_lengths = []
+            count = 0
+            for t in range(n_time):
+                if ts[t] == 1:
+                    count += 1
+                else:
+                    if count > 0:
+                        spell_lengths.append(count)
+                    count = 0
+            if count > 0:                        # close any open spell
+                spell_lengths.append(count)
+
+            mean_spell_arr[i, j] = (
+                np.mean(spell_lengths) if spell_lengths else 0.0
+            )
+
+    mean_spell = xr.DataArray(
+        mean_spell_arr,
+        coords={'latitude': da_jja.latitude, 'longitude': da_jja.longitude},
+        dims=['latitude', 'longitude'],
+        attrs={'long_name': f'Mean JJA drought spell length (SMDI < {threshold})',
+               'units': 'days'}
+    )
+    return mean_spell
+
+print("Computing mean JJA drought spell lengths (this may take ~30 s)...")
+smdi_spell_len = mean_spell_length_jja(smdi, threshold=drought_threshold)
+print(f"  Spell length range: "
+      f"{float(smdi_spell_len.min().values):.1f} – "
+      f"{float(smdi_spell_len.max().values):.1f} days")
+
+# ── Shared map utilities ──────────────────────────────────────────────────────
+lats   = smdi.latitude.values
+lons   = smdi.longitude.values
+extent = [lons.min() - 0.5, lons.max() + 0.5,
+          lats.min() - 0.5, lats.max() + 0.5]
+proj   = ccrs.PlateCarree()
+
+def style_axis(ax, title, label_left=True, label_bottom=True):
+    ax.set_extent(extent, crs=proj)
+    ax.add_feature(cfeature.LAND,      facecolor='#f0ede8', zorder=0)
+    ax.add_feature(cfeature.OCEAN,     facecolor='#d6e8f5', zorder=0)
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='#444444', zorder=2)
+    ax.add_feature(cfeature.BORDERS,   linewidth=0.6, edgecolor='#666666',
+                   linestyle='--', zorder=2)
+    ax.add_feature(cfeature.RIVERS,    linewidth=0.3, edgecolor='#7ab8d4',
+                   alpha=0.5, zorder=2)
+    gl = ax.gridlines(crs=proj, draw_labels=True,
+                      linewidth=0.4, color='grey', alpha=0.5, linestyle=':')
+    gl.top_labels    = False
+    gl.right_labels  = False
+    gl.left_labels   = label_left
+    gl.bottom_labels = label_bottom
+    gl.xlocator      = mticker.MultipleLocator(5)
+    gl.ylocator      = mticker.MultipleLocator(3)
+    gl.xformatter    = LONGITUDE_FORMATTER
+    gl.yformatter    = LATITUDE_FORMATTER
+    gl.xlabel_style  = {'size': 8}
+    gl.ylabel_style  = {'size': 8}
+    ax.set_title(title, fontsize=12, fontweight='bold', pad=8)
+
+def add_colorbar(fig, ax, im, label, extend='both'):
+    cbar = fig.colorbar(im, ax=ax, orientation='horizontal',
+                        pad=0.04, fraction=0.046, aspect=28, extend=extend)
+    cbar.set_label(label, fontsize=9)
+    cbar.ax.tick_params(labelsize=8)
+    return cbar
+
+def percentile_norm(data_2d, n_breaks=10, cmap=plt.cm.YlOrRd):
+    """
+    Build a BoundaryNorm from data-percentile-spaced breakpoints so the
+    full colormap range maps onto the actual data spread (same approach
+    as SVDI panel c — ensures spatial variability is visible regardless
+    of the absolute data range).
+    """
+    valid = data_2d[np.isfinite(data_2d)]
+    boundaries = np.unique(
+        np.round(np.nanpercentile(valid, np.linspace(0, 100, n_breaks + 1)), 2)
+    )
+    if len(boundaries) < 3:
+        boundaries = np.linspace(valid.min(), valid.max(), n_breaks + 1)
+    return mcolors.BoundaryNorm(boundaries=boundaries, ncolors=cmap.N), boundaries
+
+# ── Figure layout ─────────────────────────────────────────────────────────────
+fig, axes = plt.subplots(
+    1, 3,
+    figsize=(18, 7),
+    subplot_kw={'projection': proj},
+    gridspec_kw={'wspace': 0.12}
+)
+
+# ── Panel (a): Mean JJA SMDI ──────────────────────────────────────────────────
+mean_vals = smdi_panel_a.values
+
+# Use np.fmax instead of built-in max to avoid shadowing by earlier sm_min/sm_max
+# variable assignments in the climatology diagnostic cell
+vlim_a = np.fmax(abs(np.nanpercentile(mean_vals, 2)),
+                 abs(np.nanpercentile(mean_vals, 98)))
+
+im1 = axes[0].pcolormesh(
+    lons, lats, mean_vals,
+    cmap='RdBu',                       # blue = wet, red = dry (intuitive for SM)
+    vmin=-vlim_a, vmax=vlim_a,
+    transform=proj, shading='auto', zorder=1
+)
+style_axis(axes[0], panel_a_title, label_left=True, label_bottom=True)
+add_colorbar(fig, axes[0], im1, panel_a_cbar)
+
+# # Zero contour to mark the wet/dry boundary
+# axes[0].contour(
+#     lons, lats, mean_vals,
+#     levels=[0], colors='black', linewidths=0.8,
+#     linestyles='-', transform=proj, zorder=3
+# )
+
+# ── Panel (b): Linear Trend in JJA SMDI ──────────────────────────────────────
+trend_vals = smdi_trend.values
+vlim_b = np.fmax(abs(np.nanpercentile(trend_vals, 2)),
+                 abs(np.nanpercentile(trend_vals, 98)))
+
+im2 = axes[1].pcolormesh(
+    lons, lats, trend_vals,
+    cmap='RdBu',
+    vmin=-vlim_b, vmax=vlim_b,
+    transform=proj, shading='auto', zorder=1
+)
+style_axis(axes[1], '(b)  Linear Trend in JJA SMDI\n(yr⁻¹, from annual JJA means)',
+           label_left=False, label_bottom=True)
+add_colorbar(fig, axes[1], im2, 'SMDI trend  (yr⁻¹)')
+axes[1].contour(
+    lons, lats, trend_vals,
+    levels=[0], colors='black', linewidths=0.8,
+    linestyles='-', transform=proj, zorder=3
+)
+
+# ── Panel (c): Mean drought spell length — percentile-adaptive colormap ───────
+spell_vals = smdi_spell_len.values
+cmap_spell = plt.cm.YlOrRd
+norm_spell, boundaries_c = percentile_norm(spell_vals, n_breaks=10, cmap=cmap_spell)
+
+im3 = axes[2].pcolormesh(
+    lons, lats, spell_vals,
+    cmap=cmap_spell, norm=norm_spell,
+    transform=proj, shading='auto', zorder=1
+)
+style_axis(axes[2],
+           f'(c)  Mean JJA Drought Spell Length\n'
+           f'(consecutive days SMDI < {drought_threshold:.0f})',
+           label_left=False, label_bottom=True)
+cbar3 = add_colorbar(fig, axes[2], im3, 'Mean spell length (days)', extend='neither')
+# cbar3.ax.set_title('percentile-spaced\ncolor breaks', fontsize=7,
+#                    color='#555555', pad=4)
+
+print(f"Panel (c) colour boundaries (data-percentile-spaced, days):")
+print(np.array2string(boundaries_c, precision=1, separator=', '))
+
+# ── Shared title ──────────────────────────────────────────────────────────────
+year_start = int(smdi.time.dt.year.values[0])
+year_end   = int(smdi.time.dt.year.values[-1])
+
+fig.suptitle(
+    f'Soil Moisture Deficit Index (SMDI) — Agricultural Drought Characterisation\n'
+    f'France · Belgium · Netherlands · Germany  |  {year_start}–{year_end}',
+    fontsize=14, fontweight='bold', y=1.01
+)
+
+# plt.savefig(
+#     Path(path_save, "smdi_spatial_3panel.png"),
+#     dpi=300, bbox_inches='tight', facecolor='white'
+# )
+plt.show()
+print("Figure saved.")
+
 #%% Save SMDI as Zarr
 path_save = Path("./../Results/SMDI")
 path_save.mkdir(parents=True, exist_ok=True)

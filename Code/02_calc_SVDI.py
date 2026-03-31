@@ -240,14 +240,17 @@ vpd_mean_doy, vpd_std_doy = calculate_doy_climatology(vpd_daily_max)
 # Box & Whisker plot and empirical distribution for central gridcell's vpd_max_daily
 
 #central gridcell
-lat_idx = vpd_daily_max.latitude.size // 2
-lon_idx = vpd_daily_max.longitude.size // 2
+# lat_idx = smdi.latitude.size // 2
+# lon_idx = smdi.longitude.size // 2
 
-central_lat = vpd_daily_max.latitude.values[lat_idx]
-central_lon = vpd_daily_max.longitude.values[lon_idx]
+# central_lat = smdi.latitude.values[lat_idx]
+# central_lon = smdi.longitude.values[lon_idx]
+central_lat = 52
+central_lon = 5
 
 # data in selected gridcell 
-vpd_central = vpd_daily_max.isel(latitude=lat_idx, longitude=lon_idx).dropna(dim='time', how='any')
+vpd_central = vpd_daily_max.sel(latitude=central_lat, longitude=central_lon).dropna(dim='time', how='any')
+# vpd_central = vpd_daily_max.isel(latitude=lat_idx, longitude=lon_idx).dropna(dim='time', how='any')
 central_vpd_values = vpd_central.values
 
 #box-and-whisker plot of VPD daily max values for gridcell
@@ -313,10 +316,13 @@ print(f"SVDI range: {float(svdi.min(skipna=True).values):.2f} to {float(svdi.max
 print(f"SVDI mean:  {float(svdi.mean(skipna=True).values):.2f}")
 print(f"SVDI std:   {float(svdi.std(skipna=True).values):.2f}")
 
-#%% Sample gridcell of SVDI results 
+#%% 
+# Sample gridcell of SVDI results 
 # 1. Box & Whisker plot and empirical distribution for central gridcell's vpd_max_daily
 
-svdi_central = svdi.isel(latitude=lat_idx, longitude=lon_idx).dropna(dim='time', how='any')
+# svdi_central = svdi.isel(latitude=lat_idx, longitude=lon_idx).dropna(dim='time', how='any')
+svdi_central = svdi.sel(latitude=central_lat, longitude=central_lon).dropna(dim='time', how='any')
+
 central_svdi_values = svdi_central.values
  
 fig, axs = plt.subplots(1, 2, figsize=(11, 5))
@@ -340,10 +346,10 @@ plt.show()
 # SVDI time series with running mean and drought thresholds
 fig, ax = plt.subplots(figsize=(14, 6))
  
-svdi_central.plot(ax=ax, color='steelblue', linewidth=0.5, alpha=0.7, label='SVDI (central gridcell)')
+svdi_central.plot(ax=ax, color='steelblue', linewidth=0.5, alpha=0.7, label='SVDI')
  
-svdi_running_mean = svdi_central.rolling(time=90, center=True).mean()
-svdi_running_mean.plot(ax=ax, color='black', linewidth=1.5, alpha=0.8, label='3-month running mean')
+svdi_running_mean = svdi_central.rolling(time=30, center=True).mean()
+svdi_running_mean.plot(ax=ax, color='black', linewidth=1.5, alpha=0.8, label='1-month running mean')
  
 ax.axhline(y=1.0,  color='orange',  linestyle='--', linewidth=1, alpha=0.7, label='Mild stress threshold')
 ax.axhline(y=2.0,  color='red',     linestyle='--', linewidth=1, alpha=0.7, label='Moderate stress threshold')
@@ -351,24 +357,210 @@ ax.axhline(y=3.0,  color='darkred', linestyle='--', linewidth=1, alpha=0.7, labe
 ax.axhline(y=0,    color='black',   linestyle='-',  linewidth=0.5, alpha=0.3)
  
 known_droughts = {
-    '2003': ('2003-06-01', '2003-09-30'),
-    '2018': ('2018-05-01', '2018-09-30'),
-    '2022': ('2022-05-01', '2022-09-30'),
+    '2018': ('2018-06-01', '2018-08-30'),
+    '2020': ('2020-06-01', '2020-08-30'),    
+    '2022': ('2022-06-01', '2022-08-30')
 }
+# known_droughts = {
+#     '2003': ('2003-06-01', '2003-09-30'),
+#     '2018': ('2018-05-01', '2018-09-30'),
+#     '2022': ('2022-05-01', '2022-09-30'),
+# }
 for year, (start, end) in known_droughts.items():
     ax.axvspan(pd.to_datetime(start), pd.to_datetime(end),
                alpha=0.2, color='red', label='Known drought' if year == '2003' else '')
- 
-ax.set_xlabel('Date', fontsize=12)
-ax.set_ylabel('SVDI', fontsize=12)
-ax.set_title('Daily SVDI & 3-month Running Mean - Central gridcell example\n1980-2023',
-             fontsize=14, fontweight='bold')
+
+
+ax.set_xlim(pd.to_datetime('2015-01-01'),pd.to_datetime('2024-01-01'))
+
+ax.set_xlabel('Date', fontsize=16)
+ax.set_ylabel('SVDI', fontsize=16)
+ax.set_title('Daily SVDI & 1-month Running Mean - Utrecht, NL\n2015-2024',
+             fontsize=16, fontweight='bold')
 ax.grid(True, alpha=0.3)
-ax.legend(loc='best', fontsize=9)
+ax.tick_params(labelsize=12)
+ax.legend(loc='best', fontsize=12)
 plt.tight_layout()
 plt.show()
 
+#%%
+#%%
+# ============================================================
+# 3-Panel Spatial Map (v2):
+#   (a) Mean SVDI during potato bulking stage (JJA: Jun–Aug)
+#   (b) Linear trend of SVDI (yr⁻¹)
+#   (c) Frequency of drought-stress days during JJA — data-adaptive colormap
+# ============================================================
 
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import matplotlib.colors as mcolors
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
+import numpy as np
+from scipy import stats
+
+# ── 1. Mean SVDI during potato bulking stage (JJA) ───────────────────────────
+svdi_jja = svdi.sel(time=svdi.time.dt.month.isin([6, 7, 8]))
+svdi_panel_a  = svdi_jja.mean(dim='time').compute()
+panel_a_title = '(a)  Mean SVDI — Potato Bulking Stage\n(June–August)'
+panel_a_cbar  = 'Mean SVDI — JJA (dimensionless)'
+
+# ── 2. Linear Trend (OLS slope, yr⁻¹, per grid cell) ────────────────────────
+time_numeric = (svdi.time - svdi.time[0]).dt.days.values.astype(float)
+
+def ols_slope_peryear(y):
+    mask = np.isfinite(y)
+    if mask.sum() < 10:
+        return np.nan
+    slope, _, _, _, _ = stats.linregress(time_numeric[mask], y[mask])
+    return slope * 365.25
+
+svdi_trend = xr.apply_ufunc(
+    ols_slope_peryear,
+    svdi,
+    input_core_dims=[['time']],
+    vectorize=True,
+    dask='parallelized',
+    output_dtypes=[float],
+).compute()
+
+# ── 3. Frequency of drought-stress days during JJA only (SVDI > 1.0, %) ─────
+#
+# Restricted to JJA to match panels (a) and (b) and to focus on the
+# potato bulking window. Frequency is computed as the percentage of
+# JJA days (across all years) where SVDI exceeds the stress threshold.
+
+stress_threshold = 1.0
+n_valid_jja  = svdi_jja.count(dim='time')
+n_stress_jja = (svdi_jja > stress_threshold).sum(dim='time')
+svdi_freq    = (n_stress_jja / n_valid_jja * 100).compute()
+
+# ── Shared map utilities ──────────────────────────────────────────────────────
+lats   = svdi.latitude.values
+lons   = svdi.longitude.values
+extent = [lons.min() - 0.5, lons.max() + 0.5,
+          lats.min() - 0.5, lats.max() + 0.5]
+proj   = ccrs.PlateCarree()
+
+def style_axis(ax, title, label_left=True, label_bottom=True):
+    ax.set_extent(extent, crs=proj)
+    ax.add_feature(cfeature.LAND,      facecolor='#f0ede8', zorder=0)
+    ax.add_feature(cfeature.OCEAN,     facecolor='#d6e8f5', zorder=0)
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='#444444', zorder=2)
+    ax.add_feature(cfeature.BORDERS,   linewidth=0.6, edgecolor='#666666',
+                   linestyle='--', zorder=2)
+    ax.add_feature(cfeature.RIVERS,    linewidth=0.3, edgecolor='#7ab8d4',
+                   alpha=0.5, zorder=2)
+    gl = ax.gridlines(crs=proj, draw_labels=True,
+                      linewidth=0.4, color='grey', alpha=0.5, linestyle=':')
+    gl.top_labels    = False
+    gl.right_labels  = False
+    gl.left_labels   = label_left
+    gl.bottom_labels = label_bottom
+    gl.xlocator      = mticker.MultipleLocator(5)
+    gl.ylocator      = mticker.MultipleLocator(3)
+    gl.xformatter    = LONGITUDE_FORMATTER
+    gl.yformatter    = LATITUDE_FORMATTER
+    gl.xlabel_style  = {'size': 12}
+    gl.ylabel_style  = {'size': 12}
+    ax.set_title(title, fontsize=16, fontweight='bold', pad=8)
+
+def add_colorbar(fig, ax, im, label, extend='both'):
+    cbar = fig.colorbar(im, ax=ax, orientation='horizontal',
+                        pad=0.04, fraction=0.046, aspect=28, extend=extend)
+    cbar.set_label(label, fontsize=12)
+    cbar.ax.tick_params(labelsize=12)
+    return cbar
+
+# ── Figure layout ─────────────────────────────────────────────────────────────
+fig, axes = plt.subplots(
+    1, 3,
+    figsize=(18, 7),
+    subplot_kw={'projection': proj},
+    gridspec_kw={'wspace': 0.12}
+)
+
+# ── Panel (a): Mean JJA SVDI ──────────────────────────────────────────────────
+mean_vals = svdi_panel_a.values
+vlim_mean = np.fmax(abs(np.nanpercentile(mean_vals, 2)),
+                    abs(np.nanpercentile(mean_vals, 98)))
+
+im1 = axes[0].pcolormesh(
+    lons, lats, mean_vals,
+    cmap='RdBu_r', vmin=-vlim_mean, vmax=vlim_mean,
+    transform=proj, shading='auto', zorder=1
+)
+style_axis(axes[0], panel_a_title, label_left=True, label_bottom=True)
+add_colorbar(fig, axes[0], im1, panel_a_cbar)
+
+# ── Panel (b): Linear Trend ───────────────────────────────────────────────────
+trend_vals = svdi_trend.values
+vlim_trend = np.fmax(abs(np.nanpercentile(trend_vals, 2)),
+                     abs(np.nanpercentile(trend_vals, 98)))
+
+im2 = axes[1].pcolormesh(
+    lons, lats, trend_vals,
+    cmap='RdBu_r', vmin=-vlim_trend, vmax=vlim_trend,
+    transform=proj, shading='auto', zorder=1
+)
+style_axis(axes[1], '(b)  Linear Trend in SVDI\n(yr⁻¹)',
+           label_left=False, label_bottom=True)
+add_colorbar(fig, axes[1], im2, 'SVDI trend  (yr⁻¹)')
+axes[1].contour(
+    lons, lats, trend_vals,
+    levels=[0], colors='black', linewidths=0.8,
+    linestyles='-', transform=proj, zorder=3
+)
+
+# ── Panel (c): JJA Frequency — data-adaptive colormap ────────────────────────
+freq_vals  = svdi_freq.values
+valid_freq = freq_vals[np.isfinite(freq_vals)]
+
+# Percentile-spaced breakpoints derived from actual data distribution
+n_breaks   = 10
+pct_levels = np.linspace(0, 100, n_breaks + 1)
+boundaries = np.unique(np.round(np.nanpercentile(valid_freq, pct_levels), 1))
+if len(boundaries) < 3:
+    boundaries = np.linspace(valid_freq.min(), valid_freq.max(), n_breaks + 1)
+
+cmap_freq = plt.cm.YlOrRd
+norm_freq  = mcolors.BoundaryNorm(boundaries=boundaries, ncolors=cmap_freq.N)
+
+im3 = axes[2].pcolormesh(
+    lons, lats, freq_vals,
+    cmap=cmap_freq, norm=norm_freq,
+    transform=proj, shading='auto', zorder=1
+)
+style_axis(axes[2],
+           f'(c)  Frequency of Drought-Stress Days — JJA\n(SVDI > {stress_threshold:.0f},  % of JJA days)',
+           label_left=False, label_bottom=True)
+
+cbar3 = add_colorbar(fig, axes[2], im3,
+                     f'% of JJA days with SVDI > {stress_threshold:.0f}',
+                     extend='neither')
+# cbar3.ax.set_title('percentile-spaced\ncolor breaks',
+#                    fontsize=7, color='#555555', pad=4)
+
+print("Panel (c) color boundaries (data-percentile-spaced, %):")
+print(np.array2string(boundaries, precision=1, separator=', '))
+# ── Shared title ──────────────────────────────────────────────────────────────
+year_start = int(svdi.time.dt.year.values[0])
+year_end   = int(svdi.time.dt.year.values[-1])
+
+fig.suptitle(
+    f'Standardized VPD Drought Index (SVDI) — Spatial Characterization\n'
+    f'France · Belgium · Netherlands · Germany  |  {year_start}–{year_end}',
+    fontsize=16, fontweight='bold', y=1.01
+)
+
+# plt.savefig(
+#     Path(path_save, "svdi_spatial_3panel_v2.png"),
+#     dpi=300, bbox_inches='tight', facecolor='white'
+# )
+plt.show()
+print("Figure saved.")
 #%%
 # Save SVDI as Zarr
  
